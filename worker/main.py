@@ -2,7 +2,6 @@ import os
 import socket
 import json
 import hashlib
-import pickle
 from checkpoint_manager import CheckpointManager
 from db_client import get_conn, register_checkpoint
 
@@ -25,6 +24,15 @@ def get_or_create_node_id(node_name):
                 (node_name, ip)
             )
             return cur.fetchone()[0]
+
+def generate_sha256_checksum(file_path):
+    """Fungsi pembaca blok file untuk hitung checksum sesuai paper"""
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        # Baca file per 4KB biar aman di memori
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
 
 def main():
     print(f"[{NODE_NAME}] Worker nyala! Registrasi ke database dulu...")
@@ -49,7 +57,8 @@ def main():
             try:
                 msg = json.loads(data.decode())
                 if msg.get('type') == 'MARKER':
-                    print(f"[{NODE_NAME}] Wih, dapet MARKER! Mulai proses checkpoint...")
+                    session_id = msg.get('session_id') # Tangkap session_id dari coordinator
+                    print(f"[{NODE_NAME}] Wih, dapet MARKER untuk sesi {session_id}! Mulai proses...")
                     
                     # 1. Simulasi data aplikasi yang lagi jalan
                     state = {'task': 'hitung_data_berat', 'progress': 85}
@@ -57,20 +66,23 @@ def main():
                     # 2. Simpan file .ckpt
                     file_path = ckpt_manager.save_checkpoint(state)
                     
-                    # 3. Hitung checksum buat keamanan data
-                    checksum = hashlib.sha256(pickle.dumps(state)).hexdigest()
+                    # 3. Hitung ukuran file dan checksum dari file aslinya
+                    file_size_bytes = os.path.getsize(file_path)
+                    size_kb = max(1, int(file_size_bytes / 1024)) # Minimal 1 KB biar gak 0 di DB
+                    checksum = generate_sha256_checksum(file_path)
                     
                     # 4. Catat histori checkpoint ke Database
                     db_id = register_checkpoint(
                         node_id=node_uuid,
-                        session_id=None,
+                        session_id=session_id, # Masukin ID dari MARKER
                         seq=ckpt_manager.sequence,
                         path=file_path,
-                        size_kb=1,
+                        size_kb=size_kb,
                         checksum=checksum
                     )
                     print(f"[{NODE_NAME}] Checkpoint aman! Masuk DB dengan ID: {db_id}")
                     
+                    # Kirim balasan ke coordinator
                     conn.sendall(json.dumps({'status': 'ACK', 'node': NODE_NAME}).encode())
             except Exception as e:
                 print(f"[{NODE_NAME}] Ada error: {e}")

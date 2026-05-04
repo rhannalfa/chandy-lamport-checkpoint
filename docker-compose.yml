@@ -17,7 +17,7 @@ services:
       DB_NAME: checkpoint_db
       DB_USER: ckpt_user
       DB_PASSWORD: secret
-      WORKERS: worker1:5001,worker2:5001
+      WORKERS: worker1:5001,worker2:5001,worker3:5001
     volumes:
       - checkpoint_storage:/mnt/checkpoints
     depends_on: [postgres]
@@ -42,6 +42,19 @@ services:
     volumes:
       - checkpoint_storage:/mnt/checkpoints
     networks: [ckpt_net]
+
+  worker3:
+    build: ./worker
+    environment:
+      NODE_ID: worker3
+      COORDINATOR_HOST: coordinator
+      DB_HOST: postgres
+    volumes:
+      - checkpoint_storage:/mnt/checkpoints
+    networks:
+      - ckpt_net
+    depends_on:
+      - postgres
 
 volumes:
   pg_data:
